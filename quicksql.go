@@ -214,7 +214,7 @@ func (s *Session) Delete(record *Record) error {
 }
 
 type Record struct {
-	values        map[string]interface{}
+	values        map[string][]byte
 	pk            []string
 	tableName     string
 	autoIncrement bool
@@ -235,7 +235,7 @@ func NewRecord(options ...SessionOption) *Record {
 	record := &Record{
 		pk:            ctx.pk,
 		tableName:     ctx.tableName,
-		values:        map[string]interface{}{},
+		values:        map[string][]byte{},
 		autoIncrement: ctx.autoIncrement,
 	}
 
@@ -281,14 +281,11 @@ func (r *Record) String(name string) (string, error) {
 		return "", ErrInvalidColumn
 	}
 
-	switch value := v.(type) {
-	case nil:
+	if v == nil {
 		return "", ErrNullValue
-	case []uint8:
-		return string(value), nil
-	default:
-		return "", ErrUnsupportedValue
 	}
+
+	return string(v), nil
 }
 
 func (r *Record) MustString(name string) string {
@@ -305,18 +302,15 @@ func (r *Record) UInt64(name string) (uint64, error) {
 		return 0, ErrInvalidColumn
 	}
 
-	switch value := v.(type) {
-	case nil:
+	if v == nil {
 		return 0, ErrNullValue
-	case []uint8:
-		number, err := strconv.ParseUint(string(value), 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return number, nil
-	default:
-		return 0, ErrUnsupportedValue
 	}
+
+	number, err := strconv.ParseUint(string(v), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return number, nil
 }
 
 func (r *Record) MustUInt64(name string) uint64 {
@@ -333,18 +327,15 @@ func (r *Record) Int64(name string) (int64, error) {
 		return 0, ErrInvalidColumn
 	}
 
-	switch value := v.(type) {
-	case nil:
+	if v == nil {
 		return 0, ErrNullValue
-	case []uint8:
-		number, err := strconv.ParseInt(string(value), 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return number, nil
-	default:
-		return 0, ErrUnsupportedValue
 	}
+
+	number, err := strconv.ParseInt(string(v), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return number, nil
 }
 
 func (r *Record) MustInt64(name string) int64 {
