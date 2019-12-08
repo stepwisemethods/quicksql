@@ -1,3 +1,5 @@
+[GoDoc Documentation](https://godoc.org/github.com/stepwisemethods/quicksql)
+
 # quicksql
 
 QuickSQL is a library for accessing data in SQL databases. The primary goal is
