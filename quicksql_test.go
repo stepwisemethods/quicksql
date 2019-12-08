@@ -175,6 +175,30 @@ func TestDeleteRecord(t *testing.T) {
 	assert.Equal(t, 0, len(rows))
 }
 
+func TestDeleteRecordWithoutRead(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+
+	if err := createTables(db); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	session := NewSession(db)
+	rows, err := session.Select(
+		"SELECT COUNT(*) AS c FROM test_table",
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), rows[0].MustInt64("c"))
+
+	assert.NoError(t, session.Delete(NewRecord(map[string]interface{}{
+		"field_string": "field_string",
+	}, TableOption("test_table"), PrimaryKeyOption("field_string"))))
+
+	rows, err = session.Select("SELECT * FROM test_table LIMIT 1")
+	assert.NoError(t, err)
+	assert.Equal(t, 0, len(rows))
+}
+
 func TestSaveRecordCompositeKey(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
