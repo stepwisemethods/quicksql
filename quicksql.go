@@ -3,6 +3,7 @@ package quicksql
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -21,8 +22,11 @@ type sessionContext struct {
 	args []interface{}
 	// primary key to set on the record if any
 	pk []string
-	// table name we're currenctly working on
+	// table name we're currently working on
 	tableName string
+	// flag indicating whether the table we're working with
+	// has an auto incrementing PK
+	autoIncrement bool
 }
 
 type SessionOption func(ctx *sessionContext) error
@@ -30,6 +34,13 @@ type SessionOption func(ctx *sessionContext) error
 func PrimaryKeyOption(pk ...string) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.pk = pk
+		return nil
+	}
+}
+
+func AutoIncrementOption() SessionOption {
+	return func(ctx *sessionContext) error {
+		ctx.autoIncrement = true
 		return nil
 	}
 }
@@ -99,18 +110,53 @@ func (s *Session) Select(query string, options ...SessionOption) ([]*Record, err
 			return nil, err
 		}
 
-		values := map[string]interface{}{}
+		record := NewRecord(TableOption(selectCtx.tableName), PrimaryKeyOption(selectCtx.pk...))
 		for i, col := range cols {
-			values[colNames[i]] = col
+			record.Set(colNames[i], col)
 		}
 
-		records = append(records, NewRecord(
-			values,
-			TableOption(selectCtx.tableName),
-			PrimaryKeyOption(selectCtx.pk...),
-		))
+		records = append(records, record)
+
 	}
 	return records, nil
+}
+
+func (s *Session) Create(record *Record) error {
+	if record.tableName == "" {
+		return ErrTableNotSet
+	}
+
+	fields := []string{}
+	args := []interface{}{}
+	for field, value := range record.values {
+		fields = append(fields, "`"+field+"`")
+		args = append(args, value)
+	}
+
+	argPlaceholders := make([]string, len(args))
+	for i := range argPlaceholders {
+		argPlaceholders[i] = "?"
+	}
+
+	query := "INSERT INTO " + record.tableName + " (" + strings.Join(fields, ", ") + ") VALUES(" + strings.Join(argPlaceholders, ", ") + ")"
+
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+
+	if len(record.pk) == 1 && record.autoIncrement {
+		// When a non-composite primary key is set and the value for the PK was not set
+		// as part of the create operation, then assume that we're working with auto incrementing table
+		// and try to read the last insert id into PK field.
+		lastid, err := res.LastInsertId()
+		if err == nil {
+			record.Set(record.pk[0], lastid)
+		} else {
+			// TODO we're silently skipping here, we might want to do something about it in the future.
+		}
+	}
+	return nil
 }
 
 func (s *Session) Save(record *Record) error {
@@ -168,12 +214,13 @@ func (s *Session) Delete(record *Record) error {
 }
 
 type Record struct {
-	values    map[string]interface{}
-	pk        []string
-	tableName string
+	values        map[string]interface{}
+	pk            []string
+	tableName     string
+	autoIncrement bool
 }
 
-func NewRecord(values map[string]interface{}, options ...SessionOption) *Record {
+func NewRecord(options ...SessionOption) *Record {
 	ctx := &sessionContext{
 		pk: []string{},
 	}
@@ -186,9 +233,10 @@ func NewRecord(values map[string]interface{}, options ...SessionOption) *Record 
 	}
 
 	record := &Record{
-		values:    values,
-		pk:        ctx.pk,
-		tableName: ctx.tableName,
+		pk:            ctx.pk,
+		tableName:     ctx.tableName,
+		values:        map[string]interface{}{},
+		autoIncrement: ctx.autoIncrement,
 	}
 
 	return record
@@ -205,7 +253,25 @@ func (r *Record) Fields() []string {
 }
 
 func (r *Record) Set(name string, value interface{}) error {
-	r.values[name] = value
+	// When setting a value on the record it will be converted to a uint8
+	// slice. All Record getters currently assume that data coming from the
+	// database is passed as uint8 slice. This behavior allows us reading
+	// values from the record after setting them.
+
+	switch v := value.(type) {
+	case string:
+		r.values[name] = []uint8(v)
+		return nil
+	case []byte:
+		r.values[name] = v
+		return nil
+	case nil:
+		r.values[name] = nil
+		return nil
+	}
+
+	byteSlice := []uint8(fmt.Sprintf("%v", value))
+	r.values[name] = byteSlice
 	return nil
 }
 

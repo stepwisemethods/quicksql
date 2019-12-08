@@ -92,10 +92,7 @@ func createTables(db *sql.DB) error {
 func TestFieldNames(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select("SELECT id, field_decimal as alias FROM test_table")
@@ -108,10 +105,7 @@ func TestFieldNames(t *testing.T) {
 func TestSelectWithOptions(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select(
@@ -125,13 +119,27 @@ func TestSelectWithOptions(t *testing.T) {
 	assert.Equal(t, []string{"id", "alias"}, rows[0].Fields())
 }
 
+func TestCreateRecord(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+	assert.NoError(t, createTables(db))
+
+	session := NewSession(db)
+	record := NewRecord(TableOption("test_table"), PrimaryKeyOption("id"), AutoIncrementOption())
+	record.Set("field_string", "field_string")
+	record.Set("field_integer", 666)
+	record.Set("field_binary", "binary")
+	record.Set("field_datetime", time.Now().Format("2006-01-02"))
+	record.Set("field_text", "text")
+	record.Set("field_decimal", 555.66)
+	assert.NoError(t, session.Create(record))
+	assert.Equal(t, int64(2), record.MustInt64("id"))
+}
+
 func TestSaveRecord(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select(
@@ -154,10 +162,7 @@ func TestSaveRecord(t *testing.T) {
 func TestDeleteRecord(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select(
@@ -178,10 +183,7 @@ func TestDeleteRecord(t *testing.T) {
 func TestDeleteRecordWithoutRead(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select(
@@ -190,9 +192,9 @@ func TestDeleteRecordWithoutRead(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), rows[0].MustInt64("c"))
 
-	assert.NoError(t, session.Delete(NewRecord(map[string]interface{}{
-		"field_string": "field_string",
-	}, TableOption("test_table"), PrimaryKeyOption("field_string"))))
+	record := NewRecord(TableOption("test_table"), PrimaryKeyOption("field_string"))
+	record.Set("field_string", "field_string")
+	assert.NoError(t, session.Delete(record))
 
 	rows, err = session.Select("SELECT * FROM test_table LIMIT 1")
 	assert.NoError(t, err)
@@ -202,10 +204,7 @@ func TestDeleteRecordWithoutRead(t *testing.T) {
 func TestSaveRecordCompositeKey(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select(
@@ -228,10 +227,7 @@ func TestSaveRecordCompositeKey(t *testing.T) {
 func TestStringRead(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select("SELECT * FROM test_table")
@@ -280,10 +276,7 @@ func TestStringRead(t *testing.T) {
 func TestReadInteger(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
-
-	if err := createTables(db); err != nil {
-		t.Fatalf(err.Error())
-	}
+	assert.NoError(t, createTables(db))
 
 	session := NewSession(db)
 	rows, err := session.Select("SELECT field_integer FROM test_table")
