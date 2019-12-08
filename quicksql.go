@@ -25,23 +25,23 @@ type sessionContext struct {
 	tableName string
 }
 
-type SelectOption func(ctx *sessionContext) error
+type SessionOption func(ctx *sessionContext) error
 
-func PrimaryKeyOption(pk ...string) SelectOption {
+func PrimaryKeyOption(pk ...string) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.pk = pk
 		return nil
 	}
 }
 
-func ArgsOption(args ...interface{}) SelectOption {
+func ArgsOption(args ...interface{}) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.args = args
 		return nil
 	}
 }
 
-func TableOption(name string) SelectOption {
+func TableOption(name string) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.tableName = name
 		return nil
@@ -63,7 +63,7 @@ func NewSession(db SqlInterface) *Session {
 	}
 }
 
-func (s *Session) Select(query string, options ...SelectOption) ([]*Record, error) {
+func (s *Session) Select(query string, options ...SessionOption) ([]*Record, error) {
 	selectCtx := &sessionContext{
 		args: []interface{}{},
 		pk:   []string{},
@@ -89,13 +89,6 @@ func (s *Session) Select(query string, options ...SelectOption) ([]*Record, erro
 	records := []*Record{}
 
 	for rows.Next() {
-		record := &Record{
-			values:    map[string]interface{}{},
-			fields:    colNames,
-			pk:        selectCtx.pk,
-			tableName: selectCtx.tableName,
-		}
-
 		cols := make([]interface{}, len(colNames))
 		colPtrs := make([]interface{}, len(colNames))
 		for i := 0; i < len(colNames); i++ {
@@ -106,11 +99,16 @@ func (s *Session) Select(query string, options ...SelectOption) ([]*Record, erro
 			return nil, err
 		}
 
+		values := map[string]interface{}{}
 		for i, col := range cols {
-			record.values[colNames[i]] = col
+			values[colNames[i]] = col
 		}
 
-		records = append(records, record)
+		records = append(records, NewRecord(
+			values,
+			TableOption(selectCtx.tableName),
+			PrimaryKeyOption(selectCtx.pk...),
+		))
 	}
 	return records, nil
 }
@@ -170,15 +168,40 @@ func (s *Session) Delete(record *Record) error {
 }
 
 type Record struct {
-	fields    []string
 	values    map[string]interface{}
 	pk        []string
 	tableName string
 }
 
+func NewRecord(values map[string]interface{}, options ...SessionOption) *Record {
+	ctx := &sessionContext{
+		pk: []string{},
+	}
+
+	for _, option := range options {
+		if err := option(ctx); err != nil {
+			// TODO not a big fan of this, but let's assume people are not doing silly things.
+			panic(err)
+		}
+	}
+
+	record := &Record{
+		values:    values,
+		pk:        ctx.pk,
+		tableName: ctx.tableName,
+	}
+
+	return record
+}
+
 func (r *Record) Fields() []string {
-	// TODO should we copy?
-	return r.fields
+	fields := []string{}
+
+	for k, _ := range r.values {
+		fields = append(fields, k)
+	}
+
+	return fields
 }
 
 func (r *Record) Set(name string, value interface{}) error {
