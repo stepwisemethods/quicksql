@@ -4,13 +4,49 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 )
 
 var (
-	ErrNullValue        = errors.New("null value encountered")
-	ErrInvalidColumn    = errors.New("invalid column")
-	ErrUnsupportedValue = errors.New("unsupported value for casting")
+	ErrNullValue         = errors.New("quicksql: null value encountered")
+	ErrInvalidColumn     = errors.New("quicksql: invalid column")
+	ErrUnsupportedValue  = errors.New("quicksql: unsupported value for casting")
+	ErrPrimaryKeyNotSet  = errors.New("quicksql: primary key not set")
+	ErrPrimaryKeyInvalid = errors.New("quicksql: invalid primary key")
+	ErrTableNotSet       = errors.New("quicksql: table not set")
 )
+
+type sessionContext struct {
+	// arguments to pass to the query
+	args []interface{}
+	// primary key to set on the record if any
+	pk []string
+	// table name we're currenctly working on
+	tableName string
+}
+
+type SelectOption func(ctx *sessionContext) error
+
+func PrimaryKeyOption(pk ...string) SelectOption {
+	return func(ctx *sessionContext) error {
+		ctx.pk = pk
+		return nil
+	}
+}
+
+func ArgsOption(args ...interface{}) SelectOption {
+	return func(ctx *sessionContext) error {
+		ctx.args = args
+		return nil
+	}
+}
+
+func TableOption(name string) SelectOption {
+	return func(ctx *sessionContext) error {
+		ctx.tableName = name
+		return nil
+	}
+}
 
 type SqlInterface interface {
 	Query(string, ...interface{}) (*sql.Rows, error)
@@ -27,8 +63,19 @@ func NewSession(db SqlInterface) *Session {
 	}
 }
 
-func (s *Session) Select(query string, args ...interface{}) ([]*Record, error) {
-	rows, err := s.db.Query(query, args...)
+func (s *Session) Select(query string, options ...SelectOption) ([]*Record, error) {
+	selectCtx := &sessionContext{
+		args: []interface{}{},
+		pk:   []string{},
+	}
+
+	for _, option := range options {
+		if err := option(selectCtx); err != nil {
+			return nil, err
+		}
+	}
+
+	rows, err := s.db.Query(query, selectCtx.args...)
 	if err != nil {
 		return nil, err
 	}
@@ -43,8 +90,10 @@ func (s *Session) Select(query string, args ...interface{}) ([]*Record, error) {
 
 	for rows.Next() {
 		record := &Record{
-			values: map[string]interface{}{},
-			fields: colNames,
+			values:    map[string]interface{}{},
+			fields:    colNames,
+			pk:        selectCtx.pk,
+			tableName: selectCtx.tableName,
 		}
 
 		cols := make([]interface{}, len(colNames))
@@ -66,14 +115,61 @@ func (s *Session) Select(query string, args ...interface{}) ([]*Record, error) {
 	return records, nil
 }
 
+func (s *Session) Save(record *Record) error {
+	args := []interface{}{}
+	pkFields := []string{}
+	fields := []string{}
+
+	if record.tableName == "" {
+		return ErrTableNotSet
+	}
+
+	if record.pk == nil || len(record.pk) == 0 {
+		return ErrPrimaryKeyNotSet
+	}
+
+	for _, field := range record.pk {
+		pkFields = append(pkFields, "`"+field+"` = ?")
+	}
+
+	for field, value := range record.values {
+		fields = append(fields, "`"+field+"` = ?")
+		args = append(args, value)
+	}
+
+	for _, pkField := range record.pk {
+		pkValue, ok := record.values[pkField]
+		if !ok {
+			return ErrPrimaryKeyInvalid
+		}
+		args = append(args, pkValue)
+	}
+
+	query := "UPDATE " + record.tableName + " SET " + strings.Join(fields, ", ") + " WHERE " + strings.Join(pkFields, " AND ") + " LIMIT 1"
+
+	_, err := s.db.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type Record struct {
-	fields []string
-	values map[string]interface{}
+	fields    []string
+	values    map[string]interface{}
+	pk        []string
+	tableName string
 }
 
 func (r *Record) Fields() []string {
 	// TODO should we copy?
 	return r.fields
+}
+
+func (r *Record) Set(name string, value interface{}) error {
+	r.values[name] = value
+	return nil
 }
 
 func (r *Record) String(name string) (string, error) {

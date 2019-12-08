@@ -105,6 +105,78 @@ func TestFieldNames(t *testing.T) {
 	assert.Equal(t, []string{"id", "alias"}, rows[0].Fields())
 }
 
+func TestSelectWithOptions(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+
+	if err := createTables(db); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	session := NewSession(db)
+	rows, err := session.Select(
+		"SELECT id, field_decimal as alias FROM test_table WHERE field_integer = ? AND field_string = ?",
+		ArgsOption(666, "field_string"),
+		PrimaryKeyOption("id"),
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	assert.Equal(t, []string{"id", "alias"}, rows[0].Fields())
+}
+
+func TestSaveRecord(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+
+	if err := createTables(db); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	session := NewSession(db)
+	rows, err := session.Select(
+		"SELECT * FROM test_table LIMIT 1",
+		PrimaryKeyOption("id"),
+		TableOption("test_table"),
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	record := rows[0]
+	assert.NoError(t, record.Set("field_string", "new value"))
+	assert.NoError(t, session.Save(record))
+
+	rows, err = session.Select("SELECT * FROM test_table LIMIT 1")
+	assert.NoError(t, err)
+	assert.Equal(t, "new value", rows[0].MustString("field_string"))
+}
+
+func TestSaveRecordCompositeKey(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+
+	if err := createTables(db); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	session := NewSession(db)
+	rows, err := session.Select(
+		"SELECT * FROM test_table LIMIT 1",
+		PrimaryKeyOption("id", "field_integer"),
+		TableOption("test_table"),
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	record := rows[0]
+	assert.NoError(t, record.Set("field_string", "new value"))
+	assert.NoError(t, session.Save(record))
+
+	rows, err = session.Select("SELECT * FROM test_table LIMIT 1")
+	assert.NoError(t, err)
+	assert.Equal(t, "new value", rows[0].MustString("field_string"))
+}
+
 func TestStringRead(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
