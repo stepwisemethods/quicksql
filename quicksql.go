@@ -3,6 +3,7 @@ package quicksql
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -21,27 +22,37 @@ type sessionContext struct {
 	args []interface{}
 	// primary key to set on the record if any
 	pk []string
-	// table name we're currenctly working on
+	// table name we're currently working on
 	tableName string
+	// flag indicating whether the table we're working with
+	// has an auto incrementing PK
+	autoIncrement bool
 }
 
-type SelectOption func(ctx *sessionContext) error
+type SessionOption func(ctx *sessionContext) error
 
-func PrimaryKeyOption(pk ...string) SelectOption {
+func PrimaryKeyOption(pk ...string) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.pk = pk
 		return nil
 	}
 }
 
-func ArgsOption(args ...interface{}) SelectOption {
+func AutoIncrementOption() SessionOption {
+	return func(ctx *sessionContext) error {
+		ctx.autoIncrement = true
+		return nil
+	}
+}
+
+func ArgsOption(args ...interface{}) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.args = args
 		return nil
 	}
 }
 
-func TableOption(name string) SelectOption {
+func TableOption(name string) SessionOption {
 	return func(ctx *sessionContext) error {
 		ctx.tableName = name
 		return nil
@@ -63,7 +74,7 @@ func NewSession(db SqlInterface) *Session {
 	}
 }
 
-func (s *Session) Select(query string, options ...SelectOption) ([]*Record, error) {
+func (s *Session) Select(query string, options ...SessionOption) ([]*Record, error) {
 	selectCtx := &sessionContext{
 		args: []interface{}{},
 		pk:   []string{},
@@ -89,13 +100,6 @@ func (s *Session) Select(query string, options ...SelectOption) ([]*Record, erro
 	records := []*Record{}
 
 	for rows.Next() {
-		record := &Record{
-			values:    map[string]interface{}{},
-			fields:    colNames,
-			pk:        selectCtx.pk,
-			tableName: selectCtx.tableName,
-		}
-
 		cols := make([]interface{}, len(colNames))
 		colPtrs := make([]interface{}, len(colNames))
 		for i := 0; i < len(colNames); i++ {
@@ -106,13 +110,53 @@ func (s *Session) Select(query string, options ...SelectOption) ([]*Record, erro
 			return nil, err
 		}
 
+		record := NewRecord(TableOption(selectCtx.tableName), PrimaryKeyOption(selectCtx.pk...))
 		for i, col := range cols {
-			record.values[colNames[i]] = col
+			record.Set(colNames[i], col)
 		}
 
 		records = append(records, record)
+
 	}
 	return records, nil
+}
+
+func (s *Session) Create(record *Record) error {
+	if record.tableName == "" {
+		return ErrTableNotSet
+	}
+
+	fields := []string{}
+	args := []interface{}{}
+	for field, value := range record.values {
+		fields = append(fields, "`"+field+"`")
+		args = append(args, value)
+	}
+
+	argPlaceholders := make([]string, len(args))
+	for i := range argPlaceholders {
+		argPlaceholders[i] = "?"
+	}
+
+	query := "INSERT INTO " + record.tableName + " (" + strings.Join(fields, ", ") + ") VALUES(" + strings.Join(argPlaceholders, ", ") + ")"
+
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+
+	if len(record.pk) == 1 && record.autoIncrement {
+		// When a non-composite primary key is set and the value for the PK was not set
+		// as part of the create operation, then assume that we're working with auto incrementing table
+		// and try to read the last insert id into PK field.
+		lastid, err := res.LastInsertId()
+		if err == nil {
+			record.Set(record.pk[0], lastid)
+		} else {
+			// TODO we're silently skipping here, we might want to do something about it in the future.
+		}
+	}
+	return nil
 }
 
 func (s *Session) Save(record *Record) error {
@@ -170,19 +214,64 @@ func (s *Session) Delete(record *Record) error {
 }
 
 type Record struct {
-	fields    []string
-	values    map[string]interface{}
-	pk        []string
-	tableName string
+	values        map[string][]byte
+	pk            []string
+	tableName     string
+	autoIncrement bool
+}
+
+func NewRecord(options ...SessionOption) *Record {
+	ctx := &sessionContext{
+		pk: []string{},
+	}
+
+	for _, option := range options {
+		if err := option(ctx); err != nil {
+			// TODO not a big fan of this, but let's assume people are not doing silly things.
+			panic(err)
+		}
+	}
+
+	record := &Record{
+		pk:            ctx.pk,
+		tableName:     ctx.tableName,
+		values:        map[string][]byte{},
+		autoIncrement: ctx.autoIncrement,
+	}
+
+	return record
 }
 
 func (r *Record) Fields() []string {
-	// TODO should we copy?
-	return r.fields
+	fields := []string{}
+
+	for k, _ := range r.values {
+		fields = append(fields, k)
+	}
+
+	return fields
 }
 
 func (r *Record) Set(name string, value interface{}) error {
-	r.values[name] = value
+	// When setting a value on the record it will be converted to a uint8
+	// slice. All Record getters currently assume that data coming from the
+	// database is passed as uint8 slice. This behavior allows us reading
+	// values from the record after setting them.
+
+	switch v := value.(type) {
+	case string:
+		r.values[name] = []uint8(v)
+		return nil
+	case []byte:
+		r.values[name] = v
+		return nil
+	case nil:
+		r.values[name] = nil
+		return nil
+	}
+
+	byteSlice := []uint8(fmt.Sprintf("%v", value))
+	r.values[name] = byteSlice
 	return nil
 }
 
@@ -192,14 +281,11 @@ func (r *Record) String(name string) (string, error) {
 		return "", ErrInvalidColumn
 	}
 
-	switch value := v.(type) {
-	case nil:
+	if v == nil {
 		return "", ErrNullValue
-	case []uint8:
-		return string(value), nil
-	default:
-		return "", ErrUnsupportedValue
 	}
+
+	return string(v), nil
 }
 
 func (r *Record) MustString(name string) string {
@@ -216,18 +302,15 @@ func (r *Record) UInt64(name string) (uint64, error) {
 		return 0, ErrInvalidColumn
 	}
 
-	switch value := v.(type) {
-	case nil:
+	if v == nil {
 		return 0, ErrNullValue
-	case []uint8:
-		number, err := strconv.ParseUint(string(value), 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return number, nil
-	default:
-		return 0, ErrUnsupportedValue
 	}
+
+	number, err := strconv.ParseUint(string(v), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return number, nil
 }
 
 func (r *Record) MustUInt64(name string) uint64 {
@@ -244,18 +327,15 @@ func (r *Record) Int64(name string) (int64, error) {
 		return 0, ErrInvalidColumn
 	}
 
-	switch value := v.(type) {
-	case nil:
+	if v == nil {
 		return 0, ErrNullValue
-	case []uint8:
-		number, err := strconv.ParseInt(string(value), 10, 64)
-		if err != nil {
-			return 0, err
-		}
-		return number, nil
-	default:
-		return 0, ErrUnsupportedValue
 	}
+
+	number, err := strconv.ParseInt(string(v), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return number, nil
 }
 
 func (r *Record) MustInt64(name string) int64 {

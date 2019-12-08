@@ -28,7 +28,26 @@ statement), CRUD operations will fail with a database error.
 
 ### Create database record
 
-TODO not implemented
+```go
+var err error
+session := quicksql.NewSession(connection)
+record := quicksql.NewRecord(
+    quicksql.TableOption("users"),
+    quicksql.PrimaryKeyOption("id"),
+    quicksql.AutoIncrementOption())
+err = record.Set("name", "John")
+err = record.Set("email", "john@example.com")
+err = session.Create(record)
+```
+
+To create a new database record you need to instantiate QuickSQL `Record` and
+pass it to `Create` method of QuickSQL session instance.
+
+You must set:
+
+- `TableOption` to let QuickSQL know where to write the data.
+- `PrimaryKeyOption` if you're planning to perform further operations on the record such as updates or deletes.
+- `AutoIncrementOption` if the table is using auto incrementing primary key and you'd like to capture into the PK field after the record is created.
 
 ### Read database records
 
@@ -85,8 +104,6 @@ QuickSQL session instance.
 ## TODO
 
 - Add support for time.Time and ParseTime setting in mysql driver.
-- Add support for record creation.
-- Reading a field after `Set` won't work since getter methods assume []uint8 slices as values.
 - Setup CI on Github.
 
 ## License
