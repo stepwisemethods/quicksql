@@ -151,6 +151,30 @@ func TestSaveRecord(t *testing.T) {
 	assert.Equal(t, "new value", rows[0].MustString("field_string"))
 }
 
+func TestDeleteRecord(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+
+	if err := createTables(db); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	session := NewSession(db)
+	rows, err := session.Select(
+		"SELECT * FROM test_table LIMIT 1",
+		PrimaryKeyOption("id"),
+		TableOption("test_table"),
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	assert.NoError(t, session.Delete(rows[0]))
+
+	rows, err = session.Select("SELECT * FROM test_table LIMIT 1")
+	assert.NoError(t, err)
+	assert.Equal(t, 0, len(rows))
+}
+
 func TestSaveRecordCompositeKey(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()

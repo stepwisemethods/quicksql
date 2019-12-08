@@ -120,12 +120,8 @@ func (s *Session) Save(record *Record) error {
 	pkFields := []string{}
 	fields := []string{}
 
-	if record.tableName == "" {
-		return ErrTableNotSet
-	}
-
-	if record.pk == nil || len(record.pk) == 0 {
-		return ErrPrimaryKeyNotSet
+	if err := validateRecordForUpdateOrDelete(record); err != nil {
+		return err
 	}
 
 	for _, field := range record.pk {
@@ -148,11 +144,29 @@ func (s *Session) Save(record *Record) error {
 	query := "UPDATE " + record.tableName + " SET " + strings.Join(fields, ", ") + " WHERE " + strings.Join(pkFields, " AND ") + " LIMIT 1"
 
 	_, err := s.db.Exec(query, args...)
-	if err != nil {
+	return err
+}
+
+func (s *Session) Delete(record *Record) error {
+	if err := validateRecordForUpdateOrDelete(record); err != nil {
 		return err
 	}
 
-	return nil
+	args := []interface{}{}
+	pkFields := []string{}
+
+	for _, field := range record.pk {
+		pkFields = append(pkFields, "`"+field+"` = ?")
+		pkValue, ok := record.values[field]
+		if !ok {
+			return ErrPrimaryKeyInvalid
+		}
+		args = append(args, pkValue)
+	}
+
+	query := "DELETE FROM " + record.tableName + " WHERE " + strings.Join(pkFields, " AND ") + " LIMIT 1"
+	_, err := s.db.Exec(query, args...)
+	return err
 }
 
 type Record struct {
@@ -250,4 +264,16 @@ func (r *Record) MustInt64(name string) int64 {
 		panic(err)
 	}
 	return v
+}
+
+func validateRecordForUpdateOrDelete(record *Record) error {
+	if record.tableName == "" {
+		return ErrTableNotSet
+	}
+
+	if record.pk == nil || len(record.pk) == 0 {
+		return ErrPrimaryKeyNotSet
+	}
+
+	return nil
 }

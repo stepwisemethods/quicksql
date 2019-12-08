@@ -66,12 +66,23 @@ options.
 
 ### Delete record
 
-TODO not implemented
+```go
+session := quicksql.NewSession(connection)
+rows, err := session.Select("SELECT * FROM users WHERE email = ?",
+    quicksql.ArgsOption("john@example.com"),
+    quicksql.TableOption("users"),
+    quicksql.PrimaryKeyOption("id"),
+)
+
+err = session.Delete(rows[0])
+```
+
+To delete an existing record you need to pass it to the `Delete` methods of
+QuickSQL session instance.
 
 ## TODO
 
 - Add support for time.Time and ParseTime setting in mysql driver.
-- Add support for record deletion.
 - Add support for record creation.
 - Reading a field after `Set` won't work since getter methods assume []uint8 slices as values.
 - Setup CI on Github.
