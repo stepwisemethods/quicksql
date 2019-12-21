@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
+
+const timeLayout = "2006-01-02 15:04:05.999999"
+const timeLayoutWithTZ = timeLayout + " -0700 MST"
 
 var (
 	ErrNullValue         = errors.New("quicksql: null value encountered")
@@ -268,11 +272,39 @@ func (r *Record) Set(name string, value interface{}) error {
 	case nil:
 		r.values[name] = nil
 		return nil
+	case time.Time:
+		r.values[name] = []uint8(v.Format(timeLayout))
+		return nil
+	case *time.Time:
+		r.values[name] = []uint8(v.Format(timeLayout))
+		return nil
 	}
 
 	byteSlice := []uint8(fmt.Sprintf("%v", value))
 	r.values[name] = byteSlice
 	return nil
+}
+
+func (r *Record) TimeInLocation(name string, loc *time.Location) (time.Time, error) {
+	v, ok := r.values[name]
+	if !ok {
+		return time.Time{}, ErrInvalidColumn
+	}
+
+	if v == nil {
+		return time.Time{}, ErrNullValue
+	}
+
+	value := string(v)
+	parsed, err := time.ParseInLocation(timeLayout, value, loc)
+	if err != nil {
+		return time.ParseInLocation(timeLayoutWithTZ, value, loc)
+	}
+	return parsed, nil
+}
+
+func (r *Record) Time(name string) (time.Time, error) {
+	return r.TimeInLocation(name, time.UTC)
 }
 
 func (r *Record) String(name string) (string, error) {

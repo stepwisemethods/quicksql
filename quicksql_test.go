@@ -2,6 +2,7 @@ package quicksql
 
 import (
 	"database/sql"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,24 @@ func openMySQL(t *testing.T) *sql.DB {
 		AllowNativePasswords: true,
 		DBName:               "test",
 		ParseTime:            false,
+	}
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatalf("error connecting to the database: %s", err.Error())
+		return nil
+	}
+	return db
+}
+
+func openMySQLWithParseTime(t *testing.T) *sql.DB {
+	cfg := mysql.Config{
+		User:                 "root",
+		Passwd:               "pass",
+		Net:                  "tcp",
+		Addr:                 "127.0.0.1:32768",
+		AllowNativePasswords: true,
+		DBName:               "test",
+		ParseTime:            true,
 	}
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
@@ -99,7 +118,9 @@ func TestFieldNames(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(rows))
 
-	assert.Equal(t, []string{"id", "alias"}, rows[0].Fields())
+	fields := rows[0].Fields()
+	sort.Strings(fields)
+	assert.Equal(t, []string{"alias", "id"}, fields)
 }
 
 func TestSelectWithOptions(t *testing.T) {
@@ -115,8 +136,6 @@ func TestSelectWithOptions(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(rows))
-
-	assert.Equal(t, []string{"id", "alias"}, rows[0].Fields())
 }
 
 func TestCreateRecord(t *testing.T) {
@@ -224,6 +243,34 @@ func TestSaveRecordCompositeKey(t *testing.T) {
 	assert.Equal(t, "new value", rows[0].MustString("field_string"))
 }
 
+func TestStringReadWithParseTimeEnabled(t *testing.T) {
+	db := openMySQLWithParseTime(t)
+	defer db.Close()
+	assert.NoError(t, createTables(db))
+
+	session := NewSession(db)
+	rows, err := session.Select("SELECT * FROM test_table")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	tests := []struct {
+		field         string
+		expectedValue string
+	}{
+		{
+			field:         "field_datetime",
+			expectedValue: "2020-03-04 15:30:44",
+		},
+	}
+
+	record := rows[0]
+	for _, test := range tests {
+		value, err := record.String(test.field)
+		assert.NoError(t, err)
+		assert.Equal(t, test.expectedValue, value)
+	}
+}
+
 func TestStringRead(t *testing.T) {
 	db := openMySQL(t)
 	defer db.Close()
@@ -292,4 +339,52 @@ func TestReadInteger(t *testing.T) {
 	uintval, err := record.UInt64("field_integer")
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(666), uintval)
+}
+
+func TestReadTimeWithParseTimeDisabled(t *testing.T) {
+	db := openMySQL(t)
+	defer db.Close()
+	assert.NoError(t, createTables(db))
+
+	session := NewSession(db)
+	rows, err := session.Select("SELECT field_datetime FROM test_table")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	record := rows[0]
+
+	timefield, err := record.Time("field_datetime")
+	assert.NoError(t, err)
+	assert.Equal(t, time.Date(2020, time.March, 4, 15, 30, 44, 0, time.UTC), timefield)
+
+	location, err := time.LoadLocation("America/New_York")
+	assert.NoError(t, err)
+	timefield, err = record.TimeInLocation("field_datetime", location)
+	assert.NoError(t, err)
+	assert.Equal(t, time.Date(2020, time.March, 4, 15, 30, 44, 0, location), timefield)
+}
+
+func TestReadTimeWithParseTimeEnabled(t *testing.T) {
+	db := openMySQLWithParseTime(t)
+	defer db.Close()
+	assert.NoError(t, createTables(db))
+
+	session := NewSession(db)
+	rows, err := session.Select("SELECT field_datetime FROM test_table")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(rows))
+
+	record := rows[0]
+
+	timefield, err := record.Time("field_datetime")
+	assert.NoError(t, err)
+	assert.Equal(t, time.Date(2020, time.March, 4, 15, 30, 44, 0, time.UTC), timefield)
+
+	location, err := time.LoadLocation("America/New_York")
+	assert.NoError(t, err)
+	timefield, err = record.TimeInLocation("field_datetime", location)
+	assert.NoError(t, err)
+	// NOTE, connection is configured with UTC timezone and already has timezone information
+	// specified. TimeInLocation won't respect the location.
+	assert.Equal(t, time.Date(2020, time.March, 4, 15, 30, 44, 0, location), timefield)
 }

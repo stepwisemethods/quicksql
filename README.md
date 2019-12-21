@@ -103,7 +103,6 @@ QuickSQL session instance.
 
 ## TODO
 
-- Add support for time.Time and ParseTime setting in mysql driver.
 - Setup CI on Github.
 
 ## License
